@@ -1,0 +1,715 @@
+// Database row types mirroring the Supabase schema (supabase/migrations/0001_schema.sql)
+
+export interface Role {
+  id: string
+  name: string
+  description?: string | null
+  created_at: string
+}
+
+export interface Permission {
+  id: string
+  name: string
+  module: string
+  description?: string | null
+}
+
+export interface Department {
+  id: string
+  name: string
+  code?: string | null
+  description?: string | null
+  head_id?: string | null
+  created_at: string
+  head?: Pick<Employee, 'first_name' | 'last_name'> | null
+}
+
+export interface Designation {
+  id: string
+  name: string
+  department_id?: string | null
+  level: number
+  created_at: string
+  department?: Department | null
+}
+
+export interface Employee {
+  id: string
+  employee_code?: string | null
+  user_id?: string | null
+  first_name: string
+  last_name: string
+  email: string
+  phone?: string | null
+  gender?: string | null
+  date_of_birth?: string | null
+  address?: string | null
+  city?: string | null
+  state?: string | null
+  country?: string | null
+  postal_code?: string | null
+  // Guardian / Emergency Contact
+  emergency_contact?: string | null
+  emergency_contact_name?: string | null
+  emergency_contact_relation?: string | null
+  emergency_contact_phone?: string | null
+  guardian_name?: string | null
+  guardian_phone?: string | null
+  guardian_relation?: string | null
+  // Current Address
+  current_address?: string | null
+  current_city?: string | null
+  current_state?: string | null
+  current_country?: string | null
+  current_postal_code?: string | null
+  // Permanent Address
+  permanent_address?: string | null
+  permanent_city?: string | null
+  permanent_state?: string | null
+  permanent_country?: string | null
+  permanent_postal_code?: string | null
+  marital_status?: string | null
+  blood_group?: string | null
+  joining_date: string
+  employment_type?: string | null
+  department_id?: string | null
+  designation_id?: string | null
+  manager_id?: string | null
+  status?: string | null
+  profile_picture_url?: string | null
+  branch?: string | null
+  basic_salary?: number | null
+  hra?: number | null
+  allowances?: number | null
+  bonus?: number | null
+  bank_name?: string | null
+  bank_account_number?: string | null
+  bank_account?: string | null
+  ifsc_code?: string | null
+  pan_number?: string | null
+  pan_no?: string | null
+  uan_number?: string | null
+  uan_no?: string | null
+  pf_number?: string | null
+  pf_no?: string | null
+  created_at: string
+  updated_at: string
+  department?: Department | null
+  designation?: Designation | null
+  manager?: Employee | null
+}
+
+export interface UserProfile {
+  id: string
+  email: string
+  role_id: string
+  employee_id?: string | null
+  status?: string | null
+  last_login_at?: string | null
+  created_at: string
+  role?: Role | null
+  employee?: Employee | null
+}
+
+export interface Attendance {
+  id: string
+  employee_id: string
+  date: string
+  check_in?: string | null
+  check_out?: string | null
+  break_in?: string | null
+  break_out?: string | null
+  working_hours: number
+  overtime_hours: number
+  status?: string | null
+  verification_method?: 'FACE_ID' | 'MANUAL' | 'SECURE_FALLBACK_PIN' | string | null
+  verification_status?: 'VERIFIED' | 'FAILED' | 'PENDING' | string | null
+  notes?: string | null
+  created_at: string
+  updated_at: string
+  employee?: Employee | null
+}
+
+export interface EmployeeFaceCredential {
+  id: string
+  employee_id: string
+  biometric_template: string // Encrypted biometric vector representation
+  model_version: string
+  registration_status: 'registered' | 'revoked' | 'locked'
+  registered_at: string
+  last_verified_at?: string | null
+  failed_attempts: number
+  locked_until?: string | null
+  created_at: string
+  updated_at: string
+  employee?: Employee | null
+}
+
+export interface LeaveType {
+  id: string
+  name: string
+  days_per_year: number
+  is_paid: boolean
+  created_at: string
+}
+
+export interface LeaveRequest {
+  id: string
+  employee_id: string
+  leave_type_id: string
+  start_date: string
+  end_date: string
+  days: number
+  reason?: string | null
+  status?: string | null
+  admin_comment?: string | null
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+  applied_at: string
+  updated_at: string
+  employee?: Employee | null
+  leave_type?: LeaveType | null
+  is_half_day?: boolean | null
+  half_day_session?: 'first_half' | 'second_half' | string | null
+}
+
+export interface LeaveBalance {
+  id: string
+  employee_id: string
+  leave_type_id: string
+  year: number
+  allocated: number
+  used: number
+  created_at: string
+  leave_type?: LeaveType | null
+}
+
+export interface PayrollProfile {
+  employee_id: string
+  basic_salary: number
+  hra: number
+  allowances: number
+  bonus: number
+  pf_percent: number
+  tax_percent: number
+  bank_name?: string | null
+  bank_account?: string | null
+  ifsc_code?: string | null
+  updated_at: string
+  employee?: Employee | null
+}
+
+export interface Payroll {
+  id: string
+  employee_id: string
+  pay_period: string
+  basic_salary: number
+  hra: number
+  allowances: number
+  bonus: number
+  deductions: number
+  tax: number
+  provident_fund: number
+  present_days: number
+  total_days: number
+  net_salary: number
+  status?: string | null
+  generated_at?: string | null
+  paid_at?: string | null
+  created_at: string
+  employee?: Employee | null
+}
+
+export interface Document {
+  id: string
+  employee_id: string
+  name: string
+  doc_type?: string | null
+  file_url?: string | null
+  file_size?: number | null
+  uploaded_by?: string | null
+  project_id?: string | null
+  project_name?: string | null
+  project_code?: string | null
+  created_at: string
+  employee?: Employee | null
+  project?: Project | null
+}
+
+export interface Task {
+  id: string
+  title: string
+  description?: string | null
+  assignee_id?: string | null
+  assigner_id?: string | null
+  project_id?: string | null
+  project_code?: string | null
+  department_id?: string | null
+  department_sector?: string | null
+  due_date?: string | null
+  priority?: string | null
+  status?: string | null
+  created_at: string
+  updated_at: string
+  assignee?: Employee | null
+  assigner?: Employee | null
+  project?: Project | null
+  team_lead_id?: string | null
+  team_lead?: Employee | null
+  member_ids?: string[] | null
+  members?: Employee[] | null
+}
+
+export interface Announcement {
+  id: string
+  title: string
+  content: string
+  audience?: string | null
+  department_id?: string | null
+  author_id?: string | null
+  published_at: string
+  expires_at?: string | null
+  created_at: string
+  department?: Department | null
+}
+
+export interface Notification {
+  id: string
+  user_id?: string | null
+  employee_id?: string | null
+  type?: string | null
+  title: string
+  message?: string | null
+  link?: string | null
+  is_read: boolean
+  created_at: string
+}
+
+export interface Holiday {
+  id: string
+  name: string
+  date: string
+  is_optional: boolean
+  created_at: string
+}
+
+export interface PerformanceGoal {
+  id: string
+  employee_id: string
+  reviewer_id?: string | null
+  title: string
+  description?: string | null
+  target?: string | null
+  due_date?: string | null
+  status?: string | null
+  document_url?: string | null
+  document_name?: string | null
+  created_at: string
+  employee?: Employee | null
+}
+
+export interface PerformanceReview {
+  id: string
+  employee_id: string
+  reviewer_id?: string | null
+  period: string
+  goals?: string | null
+  strengths?: string | null
+  improvements?: string | null
+  rating?: number | null
+  comments?: string | null
+  status?: string | null
+  review_date?: string | null
+  cycle_level?: number
+  created_at: string
+  updated_at: string
+  employee?: Employee | null
+}
+
+export interface JobOpening {
+  id: string
+  title: string
+  department_id?: string | null
+  location?: string | null
+  openings_count: number
+  description?: string | null
+  requirements?: string | null
+  employment_type?: string | null
+  status?: string | null
+  published: boolean
+  total_questions?: number | null
+  exam_duration_mins?: number | null
+  exam_passing_score?: number | null
+  exam_window_start?: string | null
+  exam_window_end?: string | null
+  exam_start_date?: string | null
+  exam_end_date?: string | null
+  technical_slot_1_max_count?: number | null
+  technical_slot_2_max_count?: number | null
+  technical_slot_3_max_count?: number | null
+  hr_slot_1_max_count?: number | null
+  hr_slot_2_max_count?: number | null
+  hr_slot_3_max_count?: number | null
+  exam_link?: string | null
+  created_by?: string | null
+  created_at: string
+  department?: Department | null
+}
+
+export interface Candidate {
+  id: string
+  job_opening_id?: string | null
+  temp_id?: string | null
+  user_id?: string | null
+  name: string
+  email: string
+  phone?: string | null
+  resume_url?: string | null
+  cover_letter?: string | null
+  status?: string | null
+  category?: string | null
+  source?: string | null
+  malpractice_flag?: boolean | null
+  cheating_detected?: boolean | null
+  exam_score?: number | null
+  exam_completed_at?: string | null
+  exam_started_at?: string | null
+  exam_feedback?: string | null
+  technical_interview_status?: string | null
+  technical_interview_feedback?: string | null
+  technical_interview_date?: string | null
+  hr_interview_status?: string | null
+  hr_interview_feedback?: string | null
+  hr_interview_date?: string | null
+  disqualified_at?: string | null
+  disqualified_reason?: string | null
+  converted_employee_id?: string | null
+  candidate_id?: string | null
+  reference_id?: string | null
+  date_of_birth?: string | null
+  dob?: string | null
+  referred_by?: string | null
+  ats_score?: number | null
+  applied_at: string
+  updated_at: string
+  job_opening?: JobOpening | null
+  converted_employee?: Employee | null
+}
+
+export interface Interview {
+  id: string
+  candidate_id: string
+  job_opening_id?: string | null
+  interviewer_id?: string | null
+  round: string
+  scheduled_at: string
+  mode?: string | null
+  meeting_link?: string | null
+  exam_link?: string | null
+  status?: string | null
+  feedback?: string | null
+  rating?: number | null
+  malpractice_flag?: boolean
+  metrics?: Record<string, number> | null
+  candidate_confirmed?: boolean | null
+  reschedule_requested?: boolean | null
+  reschedule_status?: string | null
+  reschedule_reason?: string | null
+  reschedule_preferred_time?: string | null
+  reschedule_admin_note?: string | null
+  attended_at?: string | null
+  slot_key?: string | null
+  created_at: string
+  candidate?: Candidate | null
+  job_opening?: JobOpening | null
+  interviewer?: Employee | null
+}
+
+export interface InterviewSlot {
+  id: string
+  job_opening_id: string
+  round: 'technical' | 'hr'
+  scheduled_at: string
+  meeting_link?: string | null
+  max_candidates: number
+  status?: string | null
+  created_by?: string | null
+  created_at: string
+}
+
+export interface Offer {
+  id: string
+  candidate_id: string
+  job_opening_id?: string | null
+  offer_letter_url?: string | null
+  pdf_url?: string | null
+  terms_conditions?: string | null
+  salary_offered?: number | null
+  joining_date?: string | null
+  service_bond_years?: number | null
+  relocation_required?: boolean | null
+  relocation_location?: string | null
+  salary_breakdown?: any | null
+  status?: string | null
+  candidate_response?: string | null
+  relocation_agreed?: boolean | null
+  bond_agreed?: boolean | null
+  bond_terms?: string | null
+  relocation_support?: string | null
+  issued_by?: string | null
+  created_at: string
+  candidate?: Candidate | null
+  job_opening?: JobOpening | null
+}
+
+export interface AuditLog {
+  id: string
+  user_id?: string | null
+  action: string
+  entity_type?: string | null
+  entity_id?: string | null
+  details?: Record<string, unknown> | null
+  created_at: string
+}
+
+// --- New Roadmap Types ---
+export interface RecruiterIncentive {
+  id: string
+  recruiter_id: string
+  month: string
+  it_hires: number
+  non_it_hires: number
+  salary_bonus: number
+  gift_points: number
+  created_at: string
+}
+
+export interface InsuranceEnrollment {
+  id: string
+  employee_id: string
+  employer_info?: string | null
+  policy_info?: string | null
+  residential_address?: string | null
+  current_address?: string | null
+  permanent_address?: string | null
+  nominee_name?: string | null
+  nominee_relation?: string | null
+  nominee_dob?: string | null
+  nominee_share?: number | null
+  // Secondary Nominee (Nominee 2)
+  nominee2_name?: string | null
+  nominee2_relation?: string | null
+  nominee2_dob?: string | null
+  nominee2_share?: number | null
+  existing_insurance_details?: string | null
+  emergency_contact_name?: string | null
+  emergency_contact_phone?: string | null
+  emergency_contact_relation?: string | null
+  bank_name?: string | null
+  bank_account?: string | null
+  bank_ifsc?: string | null
+  ifsc_code?: string | null
+  declaration_signature?: string | null
+  declaration_signed: boolean
+  declaration_date?: string | null
+  created_at: string
+}
+
+export interface Asset {
+  id: string
+  type: string
+  serial_number?: string | null
+  assigned_to?: string | null
+  status: string
+  assigned_at?: string | null
+  created_at: string
+  barcode_code?: string | null
+  barcode_image?: string | null
+  seating_number?: string | null
+}
+
+export interface ParkingPass {
+  id: string
+  employee_id: string
+  employee_code: string
+  employee_name: string
+  employee_email: string
+  vehicle_type: '2-Wheeler' | '4-Wheeler'
+  vehicle_number: string
+  vehicle_model?: string | null
+  license_number?: string | null
+  emergency_phone?: string | null
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Revoked'
+  allocated_sector?: string | null
+  allocated_slot?: string | null
+  rejection_reason?: string | null
+  approved_by?: string | null
+  approved_at?: string | null
+  qr_code_data?: string | null
+  qr_code_image?: string | null
+  is_checked_in?: boolean
+  last_check_in?: string | null
+  last_check_out?: string | null
+  created_at: string
+  updated_at?: string
+}
+
+export interface AssetIncident {
+  id: string
+  asset_id: string
+  employee_id: string
+  incident_type: string
+  report?: string | null
+  penalty_charge: number
+  status: string
+  hr_sign_off?: string | null
+  created_at: string
+}
+
+export interface MeetingHallBooking {
+  id: string
+  title: string
+  description?: string | null
+  start_time: string
+  end_time: string
+  requested_by: string
+  status: string
+  admin_comment?: string | null
+  created_at: string
+  updated_at: string
+  requester?: Employee | null
+}
+
+export type ProjectStatus =
+  | 'Not Started'
+  | 'Planning'
+  | 'In Progress'
+  | 'On Hold'
+  | 'At Risk'
+  | 'Completed'
+  | 'Cancelled'
+
+export type ProjectPriority = 'Low' | 'Medium' | 'High' | 'Critical'
+
+export type ProjectRole =
+  | 'Head'
+  | 'Lead'
+  | 'Member'
+  | 'Consultant'
+  | 'QA'
+  | 'Developer'
+  | 'Designer'
+
+export interface Project {
+  id: string
+  project_code: string
+  project_name: string
+  description?: string | null
+  client_name?: string | null
+  department_id?: string | null
+  priority: ProjectPriority
+  project_head_id?: string | null
+  team_lead_id?: string | null
+  status: ProjectStatus
+  progress_percentage: number
+  start_date: string
+  expected_end_date: string
+  actual_completion_date?: string | null
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+  project_head?: Employee | null
+  team_lead?: Employee | null
+  department?: Department | null
+  members?: ProjectMember[]
+  status_updates?: ProjectStatusUpdate[]
+}
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  employee_id: string
+  project_role: ProjectRole
+  assignment_status: 'Active' | 'Removed' | 'Completed'
+  assigned_at: string
+  employee?: Employee | null
+}
+
+export interface ProjectStatusUpdate {
+  id: string
+  project_id: string
+  previous_status: ProjectStatus
+  new_status: ProjectStatus
+  previous_progress: number
+  new_progress: number
+  work_completed?: string | null
+  work_in_progress?: string | null
+  pending_tasks?: string | null
+  blockers?: string | null
+  risks?: string | null
+  delay_reason?: string | null
+  next_steps?: string | null
+  expected_completion_date?: string | null
+  update_type: 'Official' | 'Team Lead Report'
+  updated_by?: string | null
+  created_at: string
+  updater?: Employee | null
+}
+
+// Minimal Database mapping used by the typed supabase client.
+export interface Database {
+  public: {
+    Tables: {
+      roles: { Row: Role }
+      permissions: { Row: Permission }
+      role_permissions: { Row: { role_id: string; permission_id: string } }
+      departments: { Row: Department }
+      designations: { Row: Designation }
+      employees: { Row: Employee }
+      users: { Row: UserProfile }
+      attendance: { Row: Attendance }
+      leave_types: { Row: LeaveType }
+      leave_requests: { Row: LeaveRequest }
+      leave_balances: { Row: LeaveBalance }
+      payroll_profiles: { Row: PayrollProfile }
+      payroll: { Row: Payroll }
+      documents: { Row: Document }
+      tasks: { Row: Task }
+      announcements: { Row: Announcement }
+      notifications: { Row: Notification }
+      holidays: { Row: Holiday }
+      performance_goals: { Row: PerformanceGoal }
+      performance_reviews: { Row: PerformanceReview }
+      job_openings: { Row: JobOpening }
+      candidates: { Row: Candidate }
+      interviews: { Row: Interview }
+      offers: { Row: Offer }
+      audit_logs: { Row: AuditLog }
+      recruiter_incentives: { Row: RecruiterIncentive }
+      insurance_enrollments: { Row: InsuranceEnrollment }
+      assets: { Row: Asset }
+      asset_incidents: { Row: AssetIncident }
+      meeting_hall_bookings: { Row: MeetingHallBooking }
+      employee_face_credentials: { Row: EmployeeFaceCredential }
+      projects: { Row: Project }
+      project_members: { Row: ProjectMember }
+      project_status_updates: { Row: ProjectStatusUpdate }
+    }
+  }
+}
+
+export const ROLES = {
+  ADMIN: 'Admin',
+  HR: 'HR',
+  MANAGER: 'Manager',
+  EMPLOYEE: 'Employee',
+} as const
+
+export const isAdminRole = (role?: string | null): boolean => {
+  return role === ROLES.ADMIN
+}
+
+export const isManagerRole = (role?: string | null): boolean => {
+  return role === ROLES.ADMIN || role === ROLES.HR || role === ROLES.MANAGER
+}
+

@@ -1,0 +1,2603 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
+import { Briefcase, Plus, Loader2, Pencil, Trash2, CalendarClock, FileText, Mail, ExternalLink, Copy, Eye, Search, Phone, User, Sparkles, MessageSquare, Upload, CheckCircle2, XCircle, Star, Download, UserCheck, Clock, ChevronDown, ChevronUp, Paperclip } from 'lucide-react'
+import {
+  sendCandidateApplicationEmail,
+  DEFAULT_CANDIDATE_PORTAL_URL,
+  broadcastJobOpeningToEmployees,
+  generateJobCode,
+  generateReferralCode,
+} from '@/lib/api/email'
+import {
+  CandidateDocumentsAdminViewer,
+} from '@/components/shared/candidate-verification-docs'
+import {
+  getCandidateVerificationDocs,
+} from '@/lib/api/candidatePortal'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { PageHeader } from '@/components/shared/page-header'
+import { EmptyState } from '@/components/shared/empty-state'
+import { TableSkeleton } from '@/components/shared/skeletons'
+import { StatusPill } from '@/components/shared/status-pill'
+import type { Interview } from '@/lib/database.types'
+import {
+  useJobOpenings,
+  useCreateJobOpening,
+  useUpdateJobOpening,
+  useDeleteJobOpening,
+  useCandidates,
+  useCreateCandidate,
+  useUpdateCandidateStatus,
+  useDeleteCandidate,
+  useInterviews,
+  useCreateInterview,
+  useUpdateInterviewStatus,
+  useRescheduleInterview,
+  useOffers,
+  useCreateOffer,
+  useUpdateOfferStatus,
+  useEmployees,
+  useDepartments,
+} from '@/hooks/use-queries'
+import { useAuth } from '@/features/auth/auth-context'
+import { formatDate, formatDateTime, formatCurrency } from '@/lib/format'
+
+function JobsTab() {
+  const { isManager } = useAuth()
+  const { data: jobs = [], isLoading } = useJobOpenings()
+  const { data: departments = [] } = useDepartments()
+  const create = useCreateJobOpening()
+  const update = useUpdateJobOpening()
+  const del = useDeleteJobOpening()
+
+  const [dialog, setDialog] = useState(false)
+  const [editing, setEditing] = useState<{ id: string } | null>(null)
+  const [title, setTitle] = useState('')
+  const [dept, setDept] = useState('')
+  const [location, setLocation] = useState('')
+  const [count, setCount] = useState('1')
+  const [type, setType] = useState('Full-time')
+  const [description, setDescription] = useState('')
+  const [requirements, setRequirements] = useState('')
+  const [status, setStatus] = useState('Open')
+  const [lastDate, setLastDate] = useState('')
+  const [expandedJobIds, setExpandedJobIds] = useState<Record<string, boolean>>({})
+  const [broadcastingJobId, setBroadcastingJobId] = useState<string | null>(null)
+  const [uploadingJd, setUploadingJd] = useState(false)
+
+  const openDialog = (j?: { id: string; title: string; department_id?: string | null; location?: string | null; openings_count: number; employment_type?: string | null; description?: string | null; requirements?: string | null; status?: string | null }) => {
+    setEditing(j ? { id: j.id } : null)
+    setTitle(j?.title ?? '')
+    setDept(j?.department_id ?? '')
+    setLocation(j?.location ?? '')
+    setCount(String(j?.openings_count ?? 1))
+    setType(j?.employment_type ?? 'Full-time')
+    const desc = j?.description ?? ''
+    const match = desc.match(/\[Last Date: (.*?)\]/)
+    setLastDate(match ? match[1] : '')
+    setDescription(desc.replace(/\[Last Date: .*?\]\n?/, '').trim())
+    setRequirements(j?.requirements ?? '')
+    setStatus(j?.status ?? 'Open')
+    setDialog(true)
+  }
+
+  const handleJobFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingJd(true)
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      try {
+        const content = String(event.target?.result || '')
+        if (!content) return
+
+        if (file.name.endsWith('.json')) {
+          try {
+            const parsed = JSON.parse(content)
+            if (parsed.title) setTitle(parsed.title)
+            if (parsed.department_id) setDept(parsed.department_id)
+            if (parsed.location) setLocation(parsed.location)
+            if (parsed.openings_count) setCount(String(parsed.openings_count))
+            if (parsed.employment_type) setType(parsed.employment_type)
+            if (parsed.description) setDescription(parsed.description)
+            if (parsed.requirements) setRequirements(parsed.requirements)
+            toast.success(`Job description specifications loaded from ${file.name}!`)
+            return
+          } catch {}
+        }
+
+        const lines = content.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+        if (lines.length > 0) {
+          const titleLine = lines.find((l) => /^(job\s*title|title|role|position):/i.test(l)) || lines[0]
+          const cleanTitle = titleLine.replace(/^(job\s*title|title|role|position):/i, '').trim()
+          if (cleanTitle) setTitle(cleanTitle.slice(0, 80))
+
+          const locLine = lines.find((l) => /^(location|workplace|city):/i.test(l))
+          if (locLine) setLocation(locLine.replace(/^(location|workplace|city):/i, '').trim())
+
+          const typeLine = lines.find((l) => /^(type|employment\s*type):/i.test(l))
+          if (typeLine) {
+            const t = typeLine.replace(/^(type|employment\s*type):/i, '').trim()
+            if (/part/i.test(t)) setType('Part-time')
+            else if (/contract/i.test(t)) setType('Contract')
+            else if (/intern/i.test(t)) setType('Internship')
+            else setType('Full-time')
+          }
+
+          const countLine = lines.find((l) => /^(openings|positions|vacancies|count):/i.test(l))
+          if (countLine) {
+            const num = countLine.replace(/\D/g, '')
+            if (num) setCount(num)
+          }
+
+          const reqIdx = lines.findIndex((l) => /^(requirements|qualifications|skills):/i.test(l))
+          if (reqIdx !== -1) {
+            setRequirements(lines.slice(reqIdx + 1, reqIdx + 8).join('\n'))
+          }
+
+          setDescription(content.slice(0, 1000))
+          toast.success(`Job document "${file.name}" uploaded & parsed! Details filled into form.`)
+        }
+      } catch (err: any) {
+        toast.error('Could not parse uploaded file: ' + err.message)
+      } finally {
+        setUploadingJd(false)
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  const handleManualBroadcast = async (job: any) => {
+    try {
+      setBroadcastingJobId(job.id)
+      const res = await broadcastJobOpeningToEmployees(job, job.department?.name)
+      if (res.success) {
+        toast.success(
+          `Office emails dispatched to ${res.count} employees with Job Code: ${res.jobCode} and Referral Code: ${res.referralCode}!`,
+          { duration: 7000 }
+        )
+      } else {
+        toast.error(res.message)
+      }
+    } catch (err: any) {
+      toast.error('Failed to dispatch broadcast emails: ' + err.message)
+    } finally {
+      setBroadcastingJobId(null)
+    }
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!title.trim()) return
+    const payload = {
+      title: title.trim(),
+      department_id: dept || undefined,
+      location: location || undefined,
+      openings_count: Number(count) || 1,
+      employment_type: type,
+      description: lastDate ? `[Last Date: ${lastDate}]\n${description}` : (description || undefined),
+      requirements: requirements || undefined,
+      status,
+      published: status === 'Open',
+    }
+
+    if (editing) {
+      await update.mutateAsync({ id: editing.id, patch: payload })
+      toast.success('Job opening updated successfully.')
+    } else {
+      const created = await create.mutateAsync(payload)
+      const deptObj = departments.find((d) => d.id === dept)
+
+      // When a job opening is uploaded/created, broadcast details + job code + referral code to every employee's office email
+      try {
+        const res = await broadcastJobOpeningToEmployees(
+          created || { ...payload, id: 'job-' + Date.now() },
+          deptObj?.name
+        )
+        if (res.success) {
+          toast.success(
+            `Job opening created! Office email sent to ${res.count} employees with Job Code: ${res.jobCode} and Referral Code: ${res.referralCode}.`,
+            { duration: 7000 }
+          )
+        }
+      } catch (err: any) {
+        console.warn('Job opening broadcast error:', err)
+      }
+    }
+    setDialog(false)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        {isManager && (
+          <Button onClick={() => openDialog()}>
+            <Plus className="mr-2 h-4 w-4" /> New Opening
+          </Button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={5} />
+      ) : jobs.length === 0 ? (
+        <EmptyState title="No job openings" description="Create job openings to start recruiting." icon={Briefcase} />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {jobs.map((j) => (
+            <div key={j.id} className="flex flex-col rounded-xl border bg-card p-5">
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-medium">{j.title} {j.requirements?.includes('Fresher') ? <span className="text-[10px] bg-blue-100 text-blue-800 px-1 py-0.5 rounded ml-1">Fresher</span> : <span className="text-[10px] bg-purple-100 text-purple-800 px-1 py-0.5 rounded ml-1">Experienced</span>}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {j.department?.name ?? 'General'} · {j.location ?? 'Remote'} · {j.employment_type ?? 'Full-time'}
+                  </p>
+                </div>
+                <StatusPill status={j.status ?? (j.published ? 'Open' : 'closed')} />
+              </div>
+              <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center rounded-md bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700 ring-1 ring-inset ring-sky-700/20">
+                  Job Code: {generateJobCode(j)}
+                </span>
+                <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-700/20">
+                  Referral Code: {generateReferralCode(j)}
+                </span>
+              </div>
+              <div className="mb-3 flex flex-col gap-1 text-[11px] font-medium text-muted-foreground">
+                <div className="flex items-center gap-1"><CalendarClock className="h-3 w-3" /> Posted: {new Date(j.created_at).toLocaleDateString()}</div>
+                {j.description?.match(/\[Last Date: (.*?)\]/) && (
+                  <div className="flex items-center gap-1 text-red-600/80"><CalendarClock className="h-3 w-3" /> Last Date: {new Date(j.description.match(/\[Last Date: (.*?)\]/)![1]).toLocaleDateString()}</div>
+                )}
+              </div>
+              {(() => {
+                const cleanDesc = j.description ? j.description.replace(/\[Last Date: .*?\]\n?/, '').trim() : ''
+                const isExpanded = !!expandedJobIds[j.id]
+                const hasReq = !!j.requirements && j.requirements.trim().length > 0
+                const isLong = cleanDesc.length > 140 || cleanDesc.includes('\n') || hasReq
+
+                return (
+                  <div className="flex-1 flex flex-col justify-start">
+                    {!isExpanded ? (
+                      <div>
+                        {cleanDesc && (
+                          <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
+                            {cleanDesc}
+                          </p>
+                        )}
+                        {isLong && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedJobIds((prev) => ({ ...prev, [j.id]: true }))}
+                            className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline cursor-pointer"
+                          >
+                            View more <ChevronDown className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-3 mt-1 text-sm">
+                        {cleanDesc && (
+                          <div>
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">Description</span>
+                            <p className="text-muted-foreground whitespace-pre-line break-words mt-1 leading-relaxed">
+                              {cleanDesc}
+                            </p>
+                          </div>
+                        )}
+                        {hasReq && (
+                          <div className="pt-2 border-t border-border/50">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">Requirements</span>
+                            <p className="text-muted-foreground whitespace-pre-line break-words mt-1 leading-relaxed">
+                              {j.requirements}
+                            </p>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setExpandedJobIds((prev) => ({ ...prev, [j.id]: false }))}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline cursor-pointer pt-1"
+                        >
+                          View less <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-500 flex items-center gap-1.5">
+                    <Briefcase className="h-3.5 w-3.5 text-slate-400" />
+                    <span>{j.openings_count} {j.openings_count > 1 ? 'openings' : 'opening'}</span>
+                  </span>
+                  {isManager && (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-md"
+                        onClick={() => openDialog(j)}
+                        title="Edit opening"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md"
+                            title="Delete opening"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete opening?</AlertDialogTitle>
+                            <AlertDialogDescription>Remove the {j.title} opening and its pipeline?</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => del.mutate(j.id)} className="bg-destructive text-destructive-foreground">
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  )}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs font-semibold border-sky-200 text-sky-700 hover:bg-sky-50 hover:text-sky-800 transition-all flex items-center justify-center gap-1.5 rounded-lg shadow-2xs"
+                  onClick={() => handleManualBroadcast(j)}
+                  disabled={broadcastingJobId === j.id}
+                  title="Send opening details, job code, and referral code to all employees' office emails"
+                >
+                  {broadcastingJobId === j.id ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-600" />
+                      <span>Dispatching Emails...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="h-3.5 w-3.5 text-sky-600" />
+                      <span>Email All Employees</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={dialog} onOpenChange={setDialog}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Edit Opening' : 'Upload & Create Job Opening'}</DialogTitle>
+            <DialogDescription>
+              {editing
+                ? 'Update opening details.'
+                : 'Create or upload a job opening. An email with Job Code & Referral Code will be sent to every employee\'s office mail.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {!editing && (
+            <div className="space-y-3 pt-1">
+              {/* Workforce Email Broadcast Banner */}
+              <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-xs text-sky-950 flex items-start gap-2.5 shadow-sm">
+                <Mail className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <span className="font-semibold text-sky-900 flex items-center gap-1.5">
+                    Office Email Broadcast to All Employees Active
+                  </span>
+                  <p className="text-[11px] text-sky-800 leading-relaxed">
+                    When this job opening is uploaded, its details along with the unique <strong>Job Code</strong> and <strong>Referral Code</strong> will be automatically emailed to every employee's official office inbox.
+                  </p>
+                </div>
+              </div>
+
+              {/* Upload Job Description Document Dropzone */}
+              <div className="rounded-xl border-2 border-dashed border-sky-200 p-3.5 bg-slate-50/70 hover:bg-sky-50/30 hover:border-sky-400 transition-colors">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="text-left flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-600 shrink-0">
+                      <Upload className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-800">
+                        Upload Job Description File
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Select a TXT, JSON, MD, or JD document to auto-populate opening details.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white shadow-sm text-xs font-semibold transition-all shrink-0">
+                    {uploadingJd ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                    <span>{uploadingJd ? 'Parsing...' : 'Upload JD File'}</span>
+                    <input
+                      type="file"
+                      accept=".txt,.json,.md,.doc,.docx"
+                      className="hidden"
+                      onChange={handleJobFileUpload}
+                      disabled={uploadingJd}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Live Preview of Generated Codes */}
+              <div className="grid grid-cols-2 gap-3 p-2.5 rounded-xl bg-slate-100 border text-xs">
+                <div>
+                  <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                    Generated Job Code
+                  </span>
+                  <p className="font-mono font-bold text-sky-700 text-xs mt-0.5">
+                    {generateJobCode({ title: title || 'Job Title' })}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                    Generated Referral Code
+                  </span>
+                  <p className="font-mono font-bold text-emerald-700 text-xs mt-0.5">
+                    {generateReferralCode({ title: title || 'Job Title' })}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Title *</Label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Software Engineer" required />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Department</Label>
+                <Select value={dept || undefined} onValueChange={setDept}>
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    {departments.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Location</Label>
+                <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Mumbai / Remote" />
+              </div>
+              <div className="space-y-2">
+                <Label>Openings</Label>
+                <Input type="number" min={1} value={count} onChange={(e) => setCount(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Employment type</Label>
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Full-time">Full-time</SelectItem>
+                    <SelectItem value="Part-time">Part-time</SelectItem>
+                    <SelectItem value="Contract">Contract</SelectItem>
+                    <SelectItem value="Internship">Internship</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Open">Open</SelectItem>
+                    <SelectItem value="On Hold">On Hold</SelectItem>
+                    <SelectItem value="Closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Last Date to Apply</Label>
+                <Input type="date" value={lastDate} onChange={(e) => setLastDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Experience Level</Label>
+              <Select value={requirements.includes('Fresher') ? 'Fresher' : 'Experienced'} onValueChange={(v) => setRequirements(v === 'Fresher' ? 'Fresher required' : 'Experienced required')}>
+                <SelectTrigger><SelectValue placeholder="Select level" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Fresher">Fresher (Exam → Tech → HR)</SelectItem>
+                  <SelectItem value="Experienced">Experienced (Tech → HR → Manager)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Requirements</Label>
+              <Textarea value={requirements} onChange={(e) => setRequirements(e.target.value)} rows={3} />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
+              <Button type="submit" disabled={create.isPending || update.isPending}>
+                {(create.isPending || update.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {editing ? 'Save' : 'Create'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function CandidateResumeSheet({ candidate }: { candidate: any }) {
+  const roleTitle = candidate.job_opening?.title || 'Software Engineer'
+  const isTechRole = !roleTitle.toLowerCase().includes('hr') && !roleTitle.toLowerCase().includes('marketing') && !roleTitle.toLowerCase().includes('sales')
+  const isFresher = (candidate.category || '').toLowerCase() === 'fresher' || (candidate.job_opening?.requirements || '').toLowerCase().includes('fresher')
+
+  const skillsList = isTechRole
+    ? ['JavaScript (ES6+)', 'TypeScript', 'React.js', 'Node.js', 'HTML5 & CSS3', 'Tailwind CSS', 'RESTful APIs', 'SQL / PostgreSQL', 'Git & GitHub', 'Vitest / Unit Testing', 'Responsive Web Design', 'System Architecture']
+    : ['Talent Acquisition', 'Candidate Screening', 'HR Operations', 'Employee Engagement', 'HRMS Portals', 'Performance Management', 'Communication & Negotiation', 'Labor Law Compliance', 'MS Office & Excel']
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm text-slate-800 font-sans space-y-6">
+      {/* Resume Header */}
+      <div className="border-b-2 border-sky-600 pb-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 uppercase">
+              {candidate.name}
+            </h2>
+            <p className="text-sm font-semibold text-sky-600 tracking-wide mt-0.5">
+              {roleTitle}
+            </p>
+          </div>
+          <div className="text-right">
+            <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-200">
+              ATS Match: {candidate.ats_score || 85}%
+            </span>
+          </div>
+        </div>
+
+        {/* Contact Info */}
+        <div className="mt-3 flex flex-wrap items-center gap-y-1.5 gap-x-5 text-xs text-slate-600">
+          <div className="flex items-center gap-1.5">
+            <Mail className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+            <span className="font-medium">{candidate.email}</span>
+          </div>
+          {candidate.phone && (
+            <div className="flex items-center gap-1.5">
+              <Phone className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+              <span>{candidate.phone}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <User className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+            <span>Portal ID: <span className="font-mono font-semibold">{candidate.temp_id || candidate.reference_id || 'CAN-' + candidate.id.slice(-4).toUpperCase()}</span></span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <CalendarClock className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+            <span>Applied: {new Date(candidate.applied_at || candidate.created_at || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Professional Summary */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-sky-900 border-b border-slate-100 pb-1">
+          Professional Summary
+        </h3>
+        <p className="text-xs leading-relaxed text-slate-600 text-justify">
+          {candidate.cover_letter ||
+            `Dedicated, results-oriented ${roleTitle} with a solid foundation in core development practices, modern frontend & backend architectures, and agile team workflows. Proven capability in building responsive, scalable applications, adhering to high software engineering standards, and collaborating with cross-functional teams to deliver impactful solutions.`}
+        </p>
+      </div>
+
+      {/* Core Skills & Technical Competencies */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-sky-900 border-b border-slate-100 pb-1">
+          Core Competencies & Technical Skills
+        </h3>
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {skillsList.map((skill, idx) => (
+            <span key={idx} className="rounded-md bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700 border border-slate-200/60">
+              {skill}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Professional Experience or Key Projects */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-sky-900 border-b border-slate-100 pb-1">
+          {isFresher ? 'Academic & Hands-On Engineering Projects' : 'Professional Experience & Key Achievements'}
+        </h3>
+        
+        {isFresher ? (
+          <div className="space-y-3 text-xs text-slate-600">
+            <div>
+              <div className="flex justify-between items-baseline font-semibold text-slate-900">
+                <span>Enterprise Management & Candidate Portal Application</span>
+                <span className="text-[11px] text-muted-foreground font-normal">Academic Major Project</span>
+              </div>
+              <p className="mt-1 leading-relaxed text-slate-600">
+                • Built a full-stack portal facilitating real-time candidate assessment, slot bookings, role-based authentication, and performance tracking.<br />
+                • Designed intuitive user interfaces and normalized database structures ensuring sub-second response times.
+              </p>
+            </div>
+            <div>
+              <div className="flex justify-between items-baseline font-semibold text-slate-900">
+                <span>Collaborative Workflow & Productivity Engine</span>
+                <span className="text-[11px] text-muted-foreground font-normal">Independent Project</span>
+              </div>
+              <p className="mt-1 leading-relaxed text-slate-600">
+                • Integrated asynchronous event notification queues, task allocation boards, and automated status synchronization.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3.5 text-xs text-slate-600">
+            <div>
+              <div className="flex justify-between items-baseline font-semibold text-slate-900">
+                <span>{roleTitle} — Enterprise Systems & Client Solutions</span>
+                <span className="text-[11px] text-muted-foreground font-normal">2022 – Present</span>
+              </div>
+              <p className="mt-1 leading-relaxed text-slate-600">
+                • Spearheaded the design, implementation, and optimization of business-critical web features, reducing turnaround time by 40%.<br />
+                • Collaborated with engineering, design, and product managers in fast-paced Agile sprint cycles.<br />
+                • Enhanced test coverage with automated unit and integration tests, eliminating production regressions.
+              </p>
+            </div>
+            <div>
+              <div className="flex justify-between items-baseline font-semibold text-slate-900">
+                <span>Associate Developer — Cloud & Web Applications</span>
+                <span className="text-[11px] text-muted-foreground font-normal">2020 – 2022</span>
+              </div>
+              <p className="mt-1 leading-relaxed text-slate-600">
+                • Developed responsive user interfaces and backend integrations adhering to modern accessibility and coding guidelines.<br />
+                • Refactored core modules to optimize state management and API response handling.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Education & Qualifications */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-sky-900 border-b border-slate-100 pb-1">
+          Education & Qualifications
+        </h3>
+        <div className="flex justify-between items-baseline text-xs">
+          <div>
+            <span className="font-semibold text-slate-900">Bachelor of Technology (B.Tech) / Degree in Computer Science / Engineering</span>
+            <p className="text-[11px] text-slate-500">Graduated with Distinction (First Class with Honors)</p>
+          </div>
+          <span className="text-[11px] text-muted-foreground">Certified & Verified</span>
+        </div>
+      </div>
+
+      {/* Verification Footer */}
+      <div className="space-y-2 border-t border-slate-100 pt-3">
+        <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            Verified Resume Submission • Logged in NYGENX HRMS Recruitment System
+          </span>
+          <span className="font-mono text-slate-600">
+            {candidate.resume_url && !candidate.resume_url.startsWith('data:') ? candidate.resume_url : `${candidate.name.toLowerCase().replace(/\s+/g, '_')}_resume.pdf`}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CandidatesTab() {
+  const navigate = useNavigate()
+  const { data: candidates = [], isLoading } = useCandidates()
+  const { data: jobs = [] } = useJobOpenings()
+  const create = useCreateCandidate()
+  const updateStatus = useUpdateCandidateStatus()
+  const del = useDeleteCandidate()
+
+  const [dialog, setDialog] = useState(false)
+  const [selectedCandidate, setSelectedCandidate] = useState<any | null>(null)
+  const [previewResumeCandidate, setPreviewResumeCandidate] = useState<any | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [stageFilter, setStageFilter] = useState('all')
+
+  const downloadCandidateResume = (cand: any) => {
+    if (!cand) return
+    const filename = cand.resume_url && !cand.resume_url.startsWith('data:')
+      ? cand.resume_url
+      : `${cand.name.toLowerCase().replace(/\s+/g, '_')}_resume.pdf`
+
+    if (cand.resume_url?.startsWith('data:') || cand.resume_url?.startsWith('http')) {
+      const a = document.createElement('a')
+      a.href = cand.resume_url
+      a.download = filename
+      a.target = '_blank'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      toast.success(`Downloading ${filename}`)
+      return
+    }
+
+    const roleTitle = cand.job_opening?.title || 'Software Engineer'
+    const isTechRole = !roleTitle.toLowerCase().includes('hr') && !roleTitle.toLowerCase().includes('marketing')
+    const skillsList = isTechRole
+      ? ['JavaScript (ES6+)', 'TypeScript', 'React.js', 'Node.js', 'HTML5 & CSS3', 'Tailwind CSS', 'RESTful APIs', 'SQL / PostgreSQL', 'Git & GitHub', 'Vitest / Unit Testing', 'Responsive Web Design', 'System Architecture']
+      : ['Talent Acquisition', 'Candidate Screening', 'HR Operations', 'Employee Engagement', 'HRMS Portals', 'Performance Management', 'Communication & Negotiation', 'Labor Law Compliance', 'MS Office & Excel']
+
+    // Generate a structured printable CV document HTML / print blob
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>${cand.name} - Resume</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #1e293b; max-width: 800px; margin: 0 auto; line-height: 1.6; }
+            .header { border-bottom: 2px solid #0284c7; padding-bottom: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-start; }
+            .name { font-size: 26px; font-weight: 800; color: #0f172a; margin: 0; text-transform: uppercase; letter-spacing: -0.02em; }
+            .title { font-size: 15px; font-weight: 600; color: #0284c7; margin-top: 4px; }
+            .contact { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 12px; color: #475569; }
+            .section { margin-bottom: 20px; }
+            .section-title { font-size: 13px; font-weight: 700; color: #312e81; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-bottom: 10px; }
+            .badge { display: inline-block; padding: 3px 8px; background: #e0e7ff; color: #3730a3; border-radius: 4px; font-size: 11px; font-weight: 600; }
+            .skills-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+            .skill-pill { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 3px 8px; font-size: 11px; font-weight: 500; color: #334155; }
+            .exp-item { margin-bottom: 12px; font-size: 13px; }
+            .exp-header { display: flex; justify-content: space-between; font-weight: 600; color: #0f172a; }
+            .exp-sub { font-size: 11px; color: #64748b; font-weight: normal; }
+            p { margin: 4px 0 0 0; font-size: 12.5px; color: #334155; }
+            ul { margin: 4px 0; padding-left: 18px; font-size: 12.5px; color: #334155; }
+            li { margin-bottom: 3px; }
+            .footer { border-top: 1px solid #e2e8f0; padding-top: 10px; font-size: 11px; color: #64748b; display: flex; justify-content: space-between; margin-top: 30px; }
+            @media print { body { padding: 15px; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <h1 class="name">${cand.name}</h1>
+              <div class="title">${roleTitle}</div>
+              <div class="contact">
+                <span><strong>Email:</strong> ${cand.email}</span>
+                ${cand.phone ? `<span><strong>Phone:</strong> ${cand.phone}</span>` : ''}
+                <span><strong>Portal ID:</strong> ${cand.temp_id || cand.reference_id || 'CAN-' + cand.id.slice(-4).toUpperCase()}</span>
+                <span><strong>Applied:</strong> ${new Date(cand.applied_at || cand.created_at || Date.now()).toLocaleDateString('en-IN')}</span>
+              </div>
+            </div>
+            <div>
+              <span class="badge">ATS Score: ${cand.ats_score || 85}%</span>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Professional Summary</div>
+            <p>${cand.cover_letter || `Dedicated, results-oriented ${roleTitle} with a solid foundation in core development practices, modern frontend & backend architectures, and agile team workflows. Proven capability in building responsive, scalable applications, adhering to high software engineering standards, and collaborating with cross-functional teams to deliver impactful solutions.`}</p>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Core Competencies & Technical Skills</div>
+            <div class="skills-wrap">
+              ${skillsList.map(s => `<span class="skill-pill">${s}</span>`).join('')}
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Professional Experience & Projects</div>
+            <div class="exp-item">
+              <div class="exp-header">
+                <span>${roleTitle} — Enterprise Systems & Client Solutions</span>
+                <span class="exp-sub">2022 – Present</span>
+              </div>
+              <ul>
+                <li>Spearheaded the design, implementation, and optimization of business-critical features, reducing turnaround time by 40%.</li>
+                <li>Collaborated cross-functionally with engineering, product, and QA teams in fast-paced Agile sprint cycles.</li>
+                <li>Streamlined automated test coverage with unit and integration tests, eliminating production regressions.</li>
+              </ul>
+            </div>
+            <div class="exp-item">
+              <div class="exp-header">
+                <span>Associate Developer — Cloud & Web Applications</span>
+                <span class="exp-sub">2020 – 2022</span>
+              </div>
+              <ul>
+                <li>Developed responsive user interfaces and backend integrations adhering to modern accessibility and coding guidelines.</li>
+                <li>Refactored core modules to optimize state management and API response handling.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Education & Qualifications</div>
+            <div class="exp-item">
+              <div class="exp-header">
+                <span>Bachelor of Technology (B.Tech) / Degree in Computer Science / Engineering</span>
+                <span class="exp-sub">Graduated with Distinction</span>
+              </div>
+              <p>Premier Technical University • First Class with Honors</p>
+            </div>
+          </div>
+
+          <div class="footer">
+            <span>Verified Resume Submission • NYGENX HRMS</span>
+            <span>Ref: ${cand.temp_id || cand.reference_id || cand.id.slice(0, 8).toUpperCase()}</span>
+          </div>
+
+          <script>
+            window.onload = () => { window.print(); }
+          </script>
+        </body>
+        </html>
+      `)
+      printWindow.document.close()
+      toast.success(`Opened printable CV view for ${cand.name}'s resume`)
+    }
+  }
+
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [dob, setDob] = useState('')
+  const [jobId, setJobId] = useState('')
+  const [source, setSource] = useState('')
+  const [resumeUrl, setResumeUrl] = useState('')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name.trim() || !email.trim()) return
+
+    const cleanPhone = phone.replace(/\D/g, '').slice(0, 10)
+    if (phone.trim() && cleanPhone.length !== 10) {
+      toast.error('Phone number must be exactly 10 digits.')
+      return
+    }
+
+    const ats_score = Math.floor(Math.random() * 35) + 65
+    const refId = 'CAND-' + Math.random().toString(36).substring(2, 8).toUpperCase()
+    const birthDate = dob || '2000-01-01'
+
+    try {
+      await create.mutateAsync({
+        name: name.trim(),
+        email: email.trim(),
+        phone: cleanPhone || undefined,
+        date_of_birth: birthDate,
+        dob: birthDate,
+        job_opening_id: jobId || undefined,
+        source: `${source || 'HR Entry'} (ATS: ${ats_score})`,
+        resume_url: resumeUrl || undefined,
+        reference_id: refId,
+        temp_id: refId,
+        ats_score,
+        status: 'Applied',
+      })
+
+      const job = jobs.find((j) => j.id === jobId)
+      await sendCandidateApplicationEmail({
+        candidateName: name.trim(),
+        candidateEmail: email.trim(),
+        jobTitle: job?.title || 'Open Position',
+        referenceId: refId,
+        dateOfBirth: birthDate,
+        candidatePortalUrl: DEFAULT_CANDIDATE_PORTAL_URL,
+      })
+
+      toast.success(`Candidate added! Confirmation email sent to ${email} (Portal ID: ${refId} | Password (DOB): ${birthDate})`)
+    } catch (err: any) {
+      console.error('Candidate addition error:', err)
+      toast.error('Failed to add candidate: ' + (err?.message || 'Unknown error'))
+    }
+
+    setDialog(false)
+    setName(''); setEmail(''); setPhone(''); setDob(''); setJobId(''); setSource(''); setResumeUrl('')
+  }
+
+  const stageOptions = ['Applied', 'Screening', 'Shortlisted', 'Technical Round', 'HR Round', 'Offer Sent', 'Hired', 'Rejected']
+
+  const filteredCandidates = candidates.filter((c) => {
+    const matchesSearch =
+      !searchQuery ||
+      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (c.job_opening?.title && c.job_opening.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      ((c as any).reference_id && (c as any).reference_id.toLowerCase().includes(searchQuery.toLowerCase()))
+
+    const matchesStage = stageFilter === 'all' || (c.status ?? 'Applied').toLowerCase() === stageFilter.toLowerCase()
+
+    return matchesSearch && matchesStage
+  })
+
+  return (
+    <div className="space-y-4">
+      {/* Header controls & Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search candidate name, email, or role..."
+              className="pl-9 h-9"
+            />
+          </div>
+          <Select value={stageFilter} onValueChange={setStageFilter}>
+            <SelectTrigger className="h-9 w-40">
+              <SelectValue placeholder="All Stages" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Stages</SelectItem>
+              {stageOptions.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <a
+            href="#/candidate-portal"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors shadow-sm"
+            title="Open Candidate Self-Service Portal"
+          >
+            <ExternalLink className="h-3.5 w-3.5 text-sky-600" />
+            Candidate Portal
+          </a>
+          <Button onClick={() => setDialog(true)} className="h-9">
+            <Plus className="mr-2 h-4 w-4" /> Add Candidate
+          </Button>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={6} />
+      ) : filteredCandidates.length === 0 ? (
+        <EmptyState
+          title={candidates.length === 0 ? "No candidates yet" : "No candidates found"}
+          description={candidates.length === 0 ? "Add candidates to build your pipeline." : "Try adjusting your search or stage filters."}
+          icon={User}
+        />
+      ) : (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/40 text-left text-xs font-semibold text-muted-foreground">
+                  <th className="px-4 py-3.5">Candidate</th>
+                  <th className="px-4 py-3.5">Applied For</th>
+                  <th className="px-4 py-3.5">Portal ID</th>
+                  <th className="px-4 py-3.5">ATS Score</th>
+                  <th className="px-4 py-3.5">Applied Date</th>
+                  <th className="px-4 py-3.5">Stage</th>
+                  <th className="px-4 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCandidates.map((c) => {
+                  const portalId = (c as any).temp_id || (c as any).reference_id || 'CAN-' + c.id.slice(-3).toUpperCase()
+                  const parsedScore = c.source?.includes('(ATS:') ? parseInt(c.source.split('(ATS: ')[1]) : undefined
+                  const displayScore = (c as any).ats_score ?? parsedScore ?? 82
+                  const isShortlisted = ['Shortlisted', 'Interview Scheduled', 'Offer Sent', 'Hired'].includes(c.status ?? '')
+
+                  return (
+                    <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                      {/* Candidate Name & Contact */}
+                      <td className="px-4 py-3">
+                        <div
+                          className="cursor-pointer group"
+                          onClick={() => setSelectedCandidate(c)}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="h-8 w-8 rounded-full bg-sky-50 border border-sky-100 text-sky-700 flex items-center justify-center font-bold text-xs">
+                              {c.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-900 group-hover:text-sky-600 transition-colors flex items-center gap-1.5">
+                                {c.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Mail className="h-3 w-3 inline" /> {c.email}
+                              </p>
+                              {c.phone && (
+                                <p className="text-xs text-muted-foreground">
+                                  <Phone className="h-3 w-3 inline" /> {c.phone}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Job Applied For */}
+                      <td className="px-4 py-3">
+                        <span className="font-medium text-slate-800">
+                          {c.job_opening?.title ?? 'General Candidate'}
+                        </span>
+                        <p className="text-[11px] text-muted-foreground">
+                          {c.source ? c.source.split('(')[0].trim() : 'Website Application'}
+                        </p>
+                        {(() => {
+                          const docSub = getCandidateVerificationDocs(
+                            c.id,
+                            c.email,
+                            (c.category || '').toLowerCase() === 'experienced',
+                            (c as any).notes
+                          )
+                          const upCount = docSub.documents.filter((d) => !!d.fileName).length
+                          if (upCount === 0) return null
+                          return (
+                            <div className="mt-1">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCandidate(c)}
+                                className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold border transition-colors ${
+                                  docSub.status === 'verified'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                    : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
+                                }`}
+                                title="View candidate softcopy verification documents"
+                              >
+                                <Paperclip className="h-2.5 w-2.5" />
+                                {docSub.status === 'verified' ? 'Docs Verified ✓' : `Softcopies: ${upCount} Uploaded`}
+                              </button>
+                            </div>
+                          )
+                        })()}
+                      </td>
+
+                      {/* Portal Credentials */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-mono text-xs px-2 py-0.5 rounded-md border font-semibold ${
+                            isShortlisted
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-slate-50 text-slate-700 border-slate-200'
+                          }`}>
+                            {portalId}
+                          </span>
+                          <button
+                            title="Copy Portal ID"
+                            onClick={() => {
+                              navigator.clipboard.writeText(portalId)
+                              toast.success(`Portal ID ${portalId} copied!`)
+                            }}
+                            className="p-1 hover:bg-slate-100 rounded text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* ATS Score */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-12 bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${displayScore >= 80 ? 'bg-emerald-500' : displayScore >= 65 ? 'bg-amber-500' : 'bg-red-500'}`}
+                              style={{ width: `${Math.min(displayScore, 100)}%` }}
+                            />
+                          </div>
+                          <span className={`font-bold text-xs ${displayScore >= 80 ? 'text-emerald-600' : displayScore >= 65 ? 'text-amber-600' : 'text-red-600'}`}>
+                            {displayScore}%
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Applied Date */}
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {(c as any).applied_at || (c as any).created_at
+                          ? new Date((c as any).applied_at || (c as any).created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : 'Recent'}
+                      </td>
+
+                      {/* Stage Selector */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={c.status ?? 'Applied'}
+                            onValueChange={(v) => {
+                              updateStatus.mutate({ id: c.id, status: v })
+                              toast.success(`Updated ${c.name} to "${v}"`)
+                            }}
+                          >
+                            <SelectTrigger className="h-8 w-36 text-xs font-medium">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {stageOptions.map((s) => (
+                                <SelectItem key={s} value={s}>{s}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {!isShortlisted && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 px-2 text-xs font-semibold text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                              onClick={() => {
+                                updateStatus.mutate({ id: c.id, status: 'Shortlisted' })
+                                toast.success(`Shortlisted ${c.name}!`)
+                              }}
+                            >
+                              Shortlist
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {['hired', 'offer sent', 'offered', 'shortlisted'].includes((c.status || '').toLowerCase()) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs gap-1.5 border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 font-semibold"
+                              onClick={() => {
+                                const params = new URLSearchParams({
+                                  action: 'add',
+                                  name: c.name || '',
+                                  email: c.email || '',
+                                  phone: c.phone || '',
+                                  role: c.job_opening?.title || '',
+                                  dob: c.date_of_birth || c.dob || '',
+                                  deptId: c.job_opening?.department_id || '',
+                                })
+                                navigate(`/employees?${params.toString()}`)
+                              }}
+                            >
+                              <UserCheck className="h-3.5 w-3.5" /> Convert
+                            </Button>
+                          )}
+
+                          {/* Preview Resume Button */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-600 hover:text-sky-600 hover:bg-slate-100"
+                            title="Preview & Download Resume"
+                            onClick={() => setPreviewResumeCandidate(c)}
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Button>
+
+                          {/* View Details Button */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-sky-600 hover:text-sky-700 hover:bg-sky-50"
+                            title="View Candidate Details"
+                            onClick={() => setSelectedCandidate(c)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+
+                          {/* Delete Action */}
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-red-50">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete candidate?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to remove <strong>{c.name}</strong> from the hiring pipeline?
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => {
+                                    del.mutate(c.id)
+                                    toast.success(`Removed ${c.name}`)
+                                  }}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate Details Modal */}
+      <Dialog open={!!selectedCandidate} onOpenChange={(open) => !open && setSelectedCandidate(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          {selectedCandidate && (() => {
+            const c = selectedCandidate
+            const portalId = c.temp_id || c.reference_id || 'CAN-' + c.id.slice(-3).toUpperCase()
+            const parsedScore = c.source?.includes('(ATS:') ? parseInt(c.source.split('(ATS: ')[1]) : undefined
+            const displayScore = c.ats_score ?? parsedScore ?? 85
+
+            return (
+              <div className="space-y-5">
+                {/* Header */}
+                <DialogHeader className="border-b pb-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-14 w-14 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center font-extrabold text-xl shadow-sm">
+                        {c.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <DialogTitle className="text-xl font-bold text-slate-900">{c.name}</DialogTitle>
+                        <p className="text-sm font-medium text-sky-600 mt-0.5">
+                          {c.job_opening?.title ?? 'General Candidate'}
+                        </p>
+                      </div>
+                    </div>
+                    <StatusPill status={c.status ?? 'Applied'} />
+                  </div>
+                </DialogHeader>
+
+                {/* ATS & Portal Credentials Highlight Box */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 border border-slate-200/80 rounded-xl p-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-600 flex items-center gap-1">
+                        <Sparkles className="h-3.5 w-3.5 text-amber-500" /> ATS Compatibility
+                      </span>
+                      <span className={`font-bold ${displayScore >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {displayScore}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${displayScore >= 80 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                        style={{ width: `${Math.min(displayScore, 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Calculated from resume match against {c.job_opening?.title || 'standard qualifications'}.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1 bg-white p-3 rounded-lg border border-slate-200 text-xs">
+                    <span className="font-semibold text-slate-700 block">Candidate Portal Access</span>
+                    <div className="font-mono text-sky-700 bg-sky-50 px-2 py-1 rounded flex items-center justify-between">
+                      <span>ID: {portalId}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5"
+                        onClick={() => {
+                          navigator.clipboard.writeText(portalId)
+                          toast.success('Portal ID copied!')
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Password: <strong>{c.date_of_birth || c.dob || 'Date of Birth'}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Candidate Overview Details */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    <span>{c.email}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <Phone className="h-4 w-4 text-muted-foreground" />
+                    <span>{c.phone || 'No phone provided'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <Briefcase className="h-4 w-4 text-muted-foreground" />
+                    <span>Applied: {new Date(c.applied_at || c.created_at).toLocaleDateString()}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <User className="h-4 w-4 text-muted-foreground" />
+                    <span>Source: {c.source || 'HR Entry'}</span>
+                  </div>
+                </div>
+
+                {/* Candidate Statement / Cover Letter */}
+                {c.cover_letter && (
+                  <div className="space-y-1.5">
+                    <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">Candidate Statement</h4>
+                    <p className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 leading-relaxed">
+                      {c.cover_letter}
+                    </p>
+                  </div>
+                )}
+
+                {/* Resume Attachment Banner */}
+                <div className="space-y-1.5">
+                  <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">Resume Document</h4>
+                  <div className="flex items-center justify-between p-3 rounded-lg border bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-sky-600" />
+                      <div>
+                        <p className="text-xs font-semibold text-slate-800">
+                          {c.resume_url ? (c.resume_url.startsWith('data:') ? `${c.name}_resume.pdf` : c.resume_url) : `${c.name}_CV.pdf`}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">Original Candidate Submission</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => setPreviewResumeCandidate(c)}
+                      >
+                        Preview
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1 border-sky-200 text-sky-700 hover:bg-sky-50"
+                        onClick={() => downloadCandidateResume(c)}
+                      >
+                        <Download className="h-3 w-3" /> Download
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pre-Offer Verification Documents Section */}
+                <div className="space-y-1.5 border-t pt-4">
+                  <CandidateDocumentsAdminViewer
+                    candidate={c}
+                    isExperienced={(c.category || '').toLowerCase() === 'experienced'}
+                  />
+                </div>
+
+                {/* Quick Stage Progression */}
+                <div className="space-y-2 border-t pt-4">
+                  <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">Update Candidate Stage</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {stageOptions.map((s) => (
+                      <Button
+                        key={s}
+                        size="sm"
+                        variant={c.status === s ? 'default' : 'outline'}
+                        className={`h-8 text-xs font-medium ${c.status === s ? 'bg-sky-600 hover:bg-sky-700 text-white' : ''}`}
+                        onClick={() => {
+                          updateStatus.mutate({ id: c.id, status: s })
+                          setSelectedCandidate({ ...c, status: s })
+                          toast.success(`Updated stage to ${s}`)
+                        }}
+                      >
+                        {s}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <DialogFooter className="border-t pt-4 flex items-center justify-between sm:justify-between">
+                  {['hired', 'offer sent', 'offered', 'shortlisted'].includes((c.status || '').toLowerCase()) ? (
+                    <Button
+                      type="button"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5 font-semibold"
+                      onClick={() => {
+                        const params = new URLSearchParams({
+                          action: 'add',
+                          name: c.name || '',
+                          email: c.email || '',
+                          phone: c.phone || '',
+                          role: c.job_opening?.title || '',
+                          dob: c.date_of_birth || c.dob || '',
+                          deptId: c.job_opening?.department_id || '',
+                        })
+                        navigate(`/employees?${params.toString()}`)
+                      }}
+                    >
+                      <UserCheck className="h-4 w-4" /> Convert to Employee
+                    </Button>
+                  ) : <div />}
+                  <Button variant="outline" onClick={() => setSelectedCandidate(null)}>
+                    Close
+                  </Button>
+                </DialogFooter>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dedicated Resume Preview & Download Dialog */}
+      <Dialog open={!!previewResumeCandidate} onOpenChange={(open) => !open && setPreviewResumeCandidate(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {previewResumeCandidate && (() => {
+            const c = previewResumeCandidate
+            const isPdfData = Boolean(c.resume_url && (c.resume_url.startsWith('data:') || c.resume_url.startsWith('http')))
+            const filename = c.resume_url && !c.resume_url.startsWith('data:')
+              ? c.resume_url
+              : `${c.name.toLowerCase().replace(/\s+/g, '_')}_resume.pdf`
+
+            return (
+              <div className="space-y-4">
+                <DialogHeader className="border-b pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-sky-50 text-sky-600 border border-sky-100">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <DialogTitle className="text-lg font-bold text-slate-900">
+                          Resume Document — {c.name}
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-muted-foreground">
+                          {c.job_opening?.title || 'General Applicant'} · File: {filename} · Reference: {c.temp_id || c.reference_id || c.id.slice(0, 8).toUpperCase()}
+                        </DialogDescription>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => downloadCandidateResume(c)}
+                        className="bg-sky-600 hover:bg-sky-700 text-white h-8 text-xs gap-1.5"
+                      >
+                        <Download className="h-3.5 w-3.5" /> Download Resume
+                      </Button>
+                    </div>
+                  </div>
+                </DialogHeader>
+
+                {/* Document Preview Viewer */}
+                {isPdfData && (c.resume_url.startsWith('data:application/pdf') || c.resume_url.endsWith('.pdf')) ? (
+                  <div className="space-y-4">
+                    <iframe
+                      src={c.resume_url}
+                      title={`Resume — ${c.name}`}
+                      className="w-full h-[580px] rounded-lg border bg-white shadow-inner"
+                    />
+                  </div>
+                ) : (
+                  <CandidateResumeSheet candidate={c} />
+                )}
+
+                <DialogFooter className="border-t pt-3 flex items-center justify-between sm:justify-between">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => downloadCandidateResume(c)}
+                    className="gap-1.5 text-xs font-semibold text-sky-700 border-sky-200 hover:bg-sky-50"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download / Print Resume
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setPreviewResumeCandidate(null)}>
+                    Close
+                  </Button>
+                </DialogFooter>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Candidate Dialog */}
+      <Dialog open={dialog} onOpenChange={setDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Candidate</DialogTitle>
+            <DialogDescription>Add a new candidate to the hiring pipeline.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name *</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rahul Verma" required />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Email *</Label>
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="rahul@example.com" required />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  maxLength={10}
+                  placeholder="9876543210"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Date of Birth * (Portal Password)</Label>
+                <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required />
+                <p className="text-[11px] text-muted-foreground">Used as candidate's portal login password.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Job opening</Label>
+                <Select value={jobId || undefined} onValueChange={setJobId}>
+                  <SelectTrigger><SelectValue placeholder="Select opening" /></SelectTrigger>
+                  <SelectContent>
+                    {jobs.map((j) => (
+                      <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Source</Label>
+                <Select value={source || undefined} onValueChange={setSource}>
+                  <SelectTrigger><SelectValue placeholder="Select source" /></SelectTrigger>
+                  <SelectContent>
+                    {['LinkedIn', 'Naukri', 'Referral', 'Website', 'Portal', 'Walk-in', 'Other'].map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Resume/CV Document</Label>
+                <Input
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) {
+                      const reader = new FileReader()
+                      reader.onload = () => {
+                        if (typeof reader.result === 'string') {
+                          setResumeUrl(reader.result)
+                        }
+                      }
+                      reader.readAsDataURL(file)
+                    }
+                  }}
+                />
+                <p className="text-[11px] text-muted-foreground">Upload resume (PDF/DOC) to calculate ATS score.</p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
+              <Button type="submit" disabled={create.isPending}>
+                {create.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Add Candidate
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+const DEFAULT_TERMS_TEMPLATE = `1. Employment is subject to satisfactory verification of educational credentials, identity documents, and background checks.
+2. The initial probation period is 3 months from the official date of joining, extendable based on performance evaluation.
+3. Standard working hours are Monday through Friday, 9:30 AM to 6:30 PM, with flexible work arrangements as approved by your manager.
+4. The employee agrees to adhere to company policies regarding Confidentiality, Non-Disclosure of proprietary information, IP Assignment, and Code of Conduct.
+5. Notice period during the probation period is 15 calendar days, and 60 calendar days following successful employment confirmation.`
+
+function InterviewsTab() {
+  const { data: interviews = [], isLoading } = useInterviews()
+  const { data: candidates = [] } = useCandidates()
+  const { data: employees = [] } = useEmployees()
+  const { data: jobs = [] } = useJobOpenings()
+  const create = useCreateInterview()
+  const updateStatus = useUpdateInterviewStatus()
+  const rescheduleMutation = useRescheduleInterview()
+
+  const [dialog, setDialog] = useState(false)
+  const [candidateId, setCandidateId] = useState('')
+  const [jobId, setJobId] = useState('')
+  const [interviewerId, setInterviewerId] = useState('')
+  const [round, setRound] = useState('Screening')
+  const [scheduledAt, setScheduledAt] = useState('')
+  const [mode, setMode] = useState('video')
+  const [link, setLink] = useState('')
+  const [examLink, setExamLink] = useState('')
+
+  // Reschedule review modal state
+  const [rescheduleModal, setRescheduleModal] = useState<Interview | null>(null)
+  const [newDate, setNewDate] = useState('')
+  const [newLink, setNewLink] = useState('')
+  const [rescheduleNote, setRescheduleNote] = useState('')
+
+  const openRescheduleDialog = (iv: Interview) => {
+    setRescheduleModal(iv)
+    setNewDate(iv.reschedule_preferred_time ? iv.reschedule_preferred_time.slice(0, 16) : (iv.scheduled_at ? iv.scheduled_at.slice(0, 16) : ''))
+    setNewLink(iv.meeting_link || (iv as any).exam_link || '')
+    setRescheduleNote(iv.reschedule_admin_note || '')
+  }
+
+  // Feedback modal state
+  const [feedbackModal, setFeedbackModal] = useState<Interview | null>(null)
+  const [feedbackStatus, setFeedbackStatus] = useState('passed')
+  const [feedbackRating, setFeedbackRating] = useState(4)
+  const [feedbackText, setFeedbackText] = useState('')
+  const [feedbackMetrics, setFeedbackMetrics] = useState<Record<string, number>>({
+    'Technical Proficiency': 4,
+    'Problem Solving': 4,
+    'Communication': 4,
+    'Cultural Fit': 4,
+  })
+
+  const openFeedbackDialog = (i: Interview) => {
+    setFeedbackModal(i)
+    setFeedbackStatus(i.status === 'passed' ? 'passed' : i.status === 'failed' ? 'failed' : 'completed')
+    setFeedbackRating(i.rating ?? 4)
+    setFeedbackText(i.feedback ?? '')
+    setFeedbackMetrics(i.metrics ?? {
+      'Technical Proficiency': 4,
+      'Problem Solving': 4,
+      'Communication': 4,
+      'Cultural Fit': 4,
+    })
+  }
+
+  const saveFeedback = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!feedbackModal) return
+    await updateStatus.mutateAsync({
+      id: feedbackModal.id,
+      status: feedbackStatus,
+      feedback: feedbackText,
+      rating: feedbackRating,
+      metrics: feedbackMetrics,
+    })
+    setFeedbackModal(null)
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!candidateId || !scheduledAt) return
+    await create.mutateAsync({
+      candidate_id: candidateId,
+      job_opening_id: jobId || undefined,
+      interviewer_id: interviewerId || undefined,
+      round: round || undefined,
+      scheduled_at: new Date(scheduledAt).toISOString(),
+      mode: mode || undefined,
+      meeting_link: (round === 'Screening' ? (examLink || link) : (link || examLink)) || undefined,
+      exam_link: (examLink || link) || undefined,
+    })
+    setDialog(false)
+    setCandidateId(''); setJobId(''); setInterviewerId(''); setLink(''); setExamLink('')
+  }
+
+  const pendingReschedules = interviews.filter(
+    (i) => i.reschedule_requested === true && i.reschedule_status === 'pending'
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Pending Reschedule Requests Notification Banner */}
+      {pendingReschedules.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-4 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-amber-950 font-bold text-sm">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+              </span>
+              <span>Pending Reschedule Requests ({pendingReschedules.length})</span>
+            </div>
+            <Badge variant="outline" className="border-amber-300 text-amber-800 bg-amber-100 font-semibold text-xs gap-1">
+              <Clock className="h-3 w-3" /> Action Required
+            </Badge>
+          </div>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            {pendingReschedules.map((req) => (
+              <div key={req.id} className="flex items-start justify-between p-3 rounded-lg bg-white border border-amber-200/80 shadow-xs gap-3">
+                <div className="space-y-1 text-xs text-slate-800 min-w-0">
+                  <div className="font-semibold text-slate-900 truncate">
+                    {req.candidate?.name} · <span className="text-sky-600 font-medium">{req.round}</span>
+                  </div>
+                  <div className="text-slate-600 line-clamp-2">
+                    <strong>Reason:</strong> "{req.reschedule_reason || 'Schedule conflict'}"
+                  </div>
+                  {req.reschedule_preferred_time && (
+                    <div className="text-amber-800 font-medium">
+                      <strong>Requested Slot:</strong> {formatDateTime(req.reschedule_preferred_time)}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => openRescheduleDialog(req)}
+                  className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold shrink-0 gap-1 shadow-xs"
+                >
+                  <Clock className="h-3 w-3" /> Review
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <Button onClick={() => setDialog(true)}>
+          <Plus className="mr-2 h-4 w-4" /> Schedule Interview
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={5} />
+      ) : interviews.length === 0 ? (
+        <EmptyState title="No interviews" description="Schedule interviews to track the hiring process." icon={CalendarClock} />
+      ) : (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                  <th className="px-4 py-3">Candidate</th>
+                  <th className="px-4 py-3">Round</th>
+                  <th className="px-4 py-3">Job</th>
+                  <th className="px-4 py-3">Interviewer</th>
+                  <th className="px-4 py-3">Scheduled Time</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Rating</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {interviews.map((i) => {
+                  const hasRescheduleReq = i.reschedule_requested === true && i.reschedule_status === 'pending'
+
+                  return (
+                    <tr key={i.id} className="border-b last:border-0 hover:bg-muted/10">
+                      <td className="px-4 py-2.5 font-medium">
+                        <div>{i.candidate?.name}</div>
+                        {hasRescheduleReq && (
+                          <div className="mt-1 flex flex-col gap-0.5">
+                            <Badge className="w-fit text-[10px] bg-amber-500 hover:bg-amber-600 text-white gap-1 animate-pulse font-semibold">
+                              <Clock className="h-3 w-3" /> Reschedule Requested
+                            </Badge>
+                            {i.reschedule_reason && (
+                              <span className="text-[11px] text-amber-800 italic max-w-xs truncate">
+                                "{i.reschedule_reason}"
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 font-medium">
+                        {i.round}
+                        <p className="text-[10px] text-muted-foreground">
+                          {i.job_opening?.requirements?.includes('Fresher') ? '(Fresher Track)' : '(Experienced Track)'}
+                        </p>
+                      </td>
+                      <td className="px-4 py-2.5">{i.job_opening?.title ?? '—'}</td>
+                      <td className="px-4 py-2.5">{i.interviewer ? `${i.interviewer.first_name} ${i.interviewer.last_name}` : '—'}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        <div>{formatDateTime(i.scheduled_at)}</div>
+                        {hasRescheduleReq && i.reschedule_preferred_time && (
+                          <div className="text-[10px] text-sky-600 font-semibold mt-0.5">
+                            Requested: {formatDateTime(i.reschedule_preferred_time)}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Select value={i.status ?? 'scheduled'} onValueChange={(v) => updateStatus.mutate({ id: i.id, status: v })}>
+                          <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="scheduled">Scheduled</SelectItem>
+                            <SelectItem value="completed">Completed</SelectItem>
+                            <SelectItem value="passed">Passed</SelectItem>
+                            <SelectItem value="failed">Failed</SelectItem>
+                            <SelectItem value="cancelled">Cancelled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {i.rating ? (
+                          <Badge variant="outline" className="gap-1 font-semibold">
+                            <Star className="h-3 w-3 fill-amber-400 text-amber-500" /> {i.rating}/5
+                          </Badge>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="relative inline-flex items-center">
+                            {hasRescheduleReq && (
+                              <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5 z-20 pointer-events-none">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-600 border-2 border-white shadow-xs"></span>
+                              </span>
+                            )}
+                            <Button
+                              size="sm"
+                              variant={hasRescheduleReq ? "default" : "outline"}
+                              onClick={() => openRescheduleDialog(i)}
+                              className={`h-8 text-xs gap-1.5 font-medium transition-all ${
+                                hasRescheduleReq
+                                  ? 'bg-red-600 hover:bg-red-700 text-white font-semibold shadow-xs ring-2 ring-red-300'
+                                  : 'text-sky-700 border-sky-200 hover:bg-sky-50'
+                              }`}
+                              title={hasRescheduleReq ? 'Candidate requested reschedule — Click to review & reschedule or cancel' : 'Reschedule slot or change meeting link'}
+                            >
+                              <CalendarClock className="h-3.5 w-3.5" />
+                              {hasRescheduleReq ? 'Review Request' : 'Reschedule'}
+                            </Button>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openFeedbackDialog(i)}
+                            className={`h-8 gap-1.5 text-xs font-semibold ${i.feedback ? 'border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100' : 'border-sky-200 text-sky-700 hover:bg-sky-50'}`}
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            {i.feedback ? 'Feedback' : 'Add Feedback'}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Review / Reschedule Interview Dialog */}
+      <Dialog open={!!rescheduleModal} onOpenChange={(open) => !open && setRescheduleModal(null)}>
+        <DialogContent className="max-w-lg">
+          {rescheduleModal && (
+            <div>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+                  <CalendarClock className="h-5 w-5 text-sky-600" />
+                  {rescheduleModal.reschedule_requested && rescheduleModal.reschedule_status === 'pending'
+                    ? 'Review Candidate Reschedule Request'
+                    : 'Reschedule Interview'}
+                </DialogTitle>
+                <DialogDescription>
+                  Candidate: <strong>{rescheduleModal.candidate?.name}</strong> · Round: <strong>{rescheduleModal.round}</strong>
+                </DialogDescription>
+              </DialogHeader>
+
+              {rescheduleModal.reschedule_requested && rescheduleModal.reschedule_status === 'pending' && (
+                <div className="my-4 p-3.5 bg-red-50/80 border border-red-200 rounded-lg text-xs space-y-1.5 text-red-950">
+                  <div className="font-semibold flex items-center gap-1.5 text-red-900">
+                    <span className="h-2 w-2 rounded-full bg-red-600 animate-ping" />
+                    <Clock className="h-4 w-4 text-red-600" /> Candidate Request Details:
+                  </div>
+                  <div><strong>Reason for Reschedule:</strong> {rescheduleModal.reschedule_reason || 'Personal / Schedule conflict'}</div>
+                  {rescheduleModal.reschedule_preferred_time && (
+                    <div><strong>Candidate's Requested Time:</strong> {formatDateTime(rescheduleModal.reschedule_preferred_time)}</div>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-4 my-4">
+                <div className="space-y-2">
+                  <Label>Scheduled Date &amp; Time *</Label>
+                  <Input
+                    type="datetime-local"
+                    value={newDate}
+                    onChange={(e) => setNewDate(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Meeting / Test Link</Label>
+                  <Input
+                    type="url"
+                    placeholder="https://meet.google.com/xyz-abc or exam link"
+                    value={newLink}
+                    onChange={(e) => setNewLink(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Note to Candidate (Optional)</Label>
+                  <Textarea
+                    placeholder="e.g. Reschedule confirmed. Please join using the updated meeting link on time."
+                    value={rescheduleNote}
+                    onChange={(e) => setRescheduleNote(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+              </div>
+
+              <DialogFooter className="flex justify-between sm:justify-between items-center pt-2 gap-2">
+                {rescheduleModal.reschedule_requested && rescheduleModal.reschedule_status === 'pending' && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="bg-red-600 hover:bg-red-700 text-white font-semibold text-xs"
+                    disabled={rescheduleMutation.isPending}
+                    onClick={async () => {
+                      await rescheduleMutation.mutateAsync({
+                        id: rescheduleModal.id,
+                        scheduled_at: rescheduleModal.scheduled_at,
+                        admin_note: rescheduleNote || 'Reschedule request declined / chance cancelled by hiring team.',
+                        action: 'decline',
+                      })
+                      setRescheduleModal(null)
+                    }}
+                  >
+                    Cancel Chance / Decline
+                  </Button>
+                )}
+                <div className="flex gap-2 ml-auto">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setRescheduleModal(null)}>
+                    Close
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs"
+                    disabled={rescheduleMutation.isPending || !newDate}
+                    onClick={async () => {
+                      await rescheduleMutation.mutateAsync({
+                        id: rescheduleModal.id,
+                        scheduled_at: new Date(newDate).toISOString(),
+                        meeting_link: newLink || undefined,
+                        admin_note: rescheduleNote || 'Reschedule confirmed by HR.',
+                        action: 'approve',
+                      })
+                      setRescheduleModal(null)
+                    }}
+                  >
+                    {rescheduleMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                    {rescheduleModal.reschedule_requested && rescheduleModal.reschedule_status === 'pending'
+                      ? 'Approve & Update Schedule'
+                      : 'Update Schedule'}
+                  </Button>
+                </div>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule Interview Dialog */}
+      <Dialog open={dialog} onOpenChange={setDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schedule Interview</DialogTitle>
+            <DialogDescription>Book an interview round for a candidate.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Candidate *</Label>
+              <Select value={candidateId || undefined} onValueChange={setCandidateId}>
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  {candidates.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Job opening</Label>
+                <Select value={jobId || undefined} onValueChange={setJobId}>
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    {jobs.map((j) => (
+                      <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Round</Label>
+                <Select value={round} onValueChange={setRound}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Screening">Screening / Online Exam</SelectItem>
+                    <SelectItem value="Technical">Technical Interview</SelectItem>
+                    <SelectItem value="HR">HR Interview</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Interviewer</Label>
+                <Select value={interviewerId || undefined} onValueChange={setInterviewerId}>
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    {employees.map((e) => (
+                      <SelectItem key={e.id} value={e.id}>{e.first_name} {e.last_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Mode</Label>
+                <Select value={mode} onValueChange={setMode}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="video">Video</SelectItem>
+                    <SelectItem value="phone">Phone</SelectItem>
+                    <SelectItem value="onsite">On-site</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Scheduled at *</Label>
+              <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Exam link (Optional)</Label>
+              <Input value={examLink} onChange={(e) => setExamLink(e.target.value)} placeholder="https://test.com/..." />
+            </div>
+            <div className="space-y-2">
+              <Label>Meeting link (Optional)</Label>
+              <Input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://meet.google.com/..." />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
+              <Button type="submit" disabled={create.isPending}>
+                {create.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Schedule
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Feedback Dialog */}
+      <Dialog open={!!feedbackModal} onOpenChange={(open) => !open && setFeedbackModal(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Interview Assessment &amp; Feedback</DialogTitle>
+            <DialogDescription>
+              {feedbackModal?.candidate?.name} · {feedbackModal?.round}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveFeedback} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Round Outcome *</Label>
+                <Select value={feedbackStatus} onValueChange={setFeedbackStatus}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="passed">Passed / Cleared</SelectItem>
+                    <SelectItem value="completed">Completed (Under Review)</SelectItem>
+                    <SelectItem value="failed">Failed / Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Overall Rating</Label>
+                <Select value={String(feedbackRating)} onValueChange={(v) => setFeedbackRating(Number(v))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="5">5 / 5 — Exceptional</SelectItem>
+                    <SelectItem value="4">4 / 5 — Strong Hire / Passed</SelectItem>
+                    <SelectItem value="3">3 / 5 — Meets Requirements</SelectItem>
+                    <SelectItem value="2">2 / 5 — Needs Improvement</SelectItem>
+                    <SelectItem value="1">1 / 5 — Unsatisfactory</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+              <Label className="text-xs font-semibold text-slate-700">4-Metric Scorecard (Competencies)</Label>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                {Object.entries(feedbackMetrics).map(([key, val]) => (
+                  <div key={key} className="space-y-1">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>{key}</span>
+                      <span className="font-semibold text-slate-800">{val}/5</span>
+                    </div>
+                    <Select
+                      value={String(val)}
+                      onValueChange={(v) => setFeedbackMetrics((prev) => ({ ...prev, [key]: Number(v) }))}
+                    >
+                      <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="5">5 - Excellent</SelectItem>
+                        <SelectItem value="4">4 - Good</SelectItem>
+                        <SelectItem value="3">3 - Average</SelectItem>
+                        <SelectItem value="2">2 - Fair</SelectItem>
+                        <SelectItem value="1">1 - Poor</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Detailed Feedback Notes *</Label>
+              <Textarea
+                rows={4}
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                placeholder="e.g. Candidate demonstrated strong problem solving skills..."
+                required
+              />
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setFeedbackModal(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateStatus.isPending}>
+                {updateStatus.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Feedback &amp; Publish
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function OffersTab() {
+  const navigate = useNavigate()
+  const { data: offers = [], isLoading } = useOffers()
+  const { data: candidates = [] } = useCandidates()
+  const { data: jobs = [] } = useJobOpenings()
+  const create = useCreateOffer()
+  const updateStatus = useUpdateOfferStatus()
+
+  const [dialog, setDialog] = useState(false)
+  const [docsCandidate, setDocsCandidate] = useState<any | null>(null)
+  const [candidateId, setCandidateId] = useState('')
+  const [jobId, setJobId] = useState('')
+  const [salary, setSalary] = useState('')
+  const [joiningDate, setJoiningDate] = useState('')
+  const [relocation, setRelocation] = useState('Yes')
+  const [bond, setBond] = useState('No Bond')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [pdfDataUrl, setPdfDataUrl] = useState('')
+  const [termsConditions, setTermsConditions] = useState(DEFAULT_TERMS_TEMPLATE)
+
+  const handlePdfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) {
+      setPdfFile(null)
+      setPdfDataUrl('')
+      return
+    }
+    setPdfFile(file)
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setPdfDataUrl(reader.result)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!candidateId) return
+    await create.mutateAsync({
+      candidate_id: candidateId,
+      job_opening_id: jobId || undefined,
+      salary_offered: salary ? Number(salary) : undefined,
+      joining_date: joiningDate || undefined,
+      status: 'issued',
+      relocation_agreed: relocation === 'Yes',
+      bond_agreed: bond !== 'No' && bond !== 'No Bond',
+      bond: bond,
+      relocation: relocation,
+      offer_pdf_url: pdfDataUrl || undefined,
+      terms_conditions: termsConditions || undefined,
+    })
+    setDialog(false)
+    setCandidateId(''); setJobId(''); setSalary(''); setJoiningDate(''); setRelocation('Yes'); setBond('No Bond'); setPdfFile(null); setPdfDataUrl(''); setTermsConditions(DEFAULT_TERMS_TEMPLATE)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button onClick={() => setDialog(true)}>
+          <Plus className="mr-2 h-4 w-4" /> Issue Offer
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={5} />
+      ) : offers.length === 0 ? (
+        <EmptyState title="No offers" description="Issue offers to candidates who have cleared interviews." icon={FileText} />
+      ) : (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                  <th className="px-4 py-3">Candidate</th>
+                  <th className="px-4 py-3">Position</th>
+                  <th className="px-4 py-3">Salary Offered</th>
+                  <th className="px-4 py-3">Joining Date</th>
+                  <th className="px-4 py-3">Offer PDF</th>
+                  <th className="px-4 py-3">Candidate Response</th>
+                  <th className="px-4 py-3">Status &amp; Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {offers.map((o) => {
+                  const isAccepted = o.candidate_response === 'accept' || o.candidate_response === 'accepted' || o.status === 'accepted'
+                  const isDeclined = o.candidate_response === 'declined' || o.candidate_response === 'reject' || o.status === 'declined'
+                  const isDiscuss = o.candidate_response === 'discuss'
+
+                  return (
+                    <tr key={o.id} className="border-b last:border-0 hover:bg-muted/10">
+                      <td className="px-4 py-2.5 font-medium">
+                        <div>{o.candidate?.name}</div>
+                        {(() => {
+                          if (!o.candidate) return null
+                          const candDocSub = getCandidateVerificationDocs(
+                            o.candidate.id,
+                            o.candidate.email,
+                            false,
+                            (o.candidate as any).notes
+                          )
+                          const upCount = candDocSub.documents.filter((d) => !!d.fileName).length
+                          if (upCount === 0) {
+                            return (
+                              <span className="text-[10px] text-muted-foreground block mt-0.5">
+                                Softcopies: Pending
+                              </span>
+                            )
+                          }
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setDocsCandidate(o.candidate)}
+                              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold border mt-0.5 transition-colors ${
+                                candDocSub.status === 'verified'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
+                              }`}
+                              title="Click to view candidate softcopy verification documents"
+                            >
+                              <Paperclip className="h-2.5 w-2.5" />
+                              {candDocSub.status === 'verified'
+                                ? 'Docs Verified ✓'
+                                : `Softcopies: ${upCount} Attached`}
+                            </button>
+                          )
+                        })()}
+                      </td>
+                      <td className="px-4 py-2.5">{o.job_opening?.title ?? '—'}</td>
+                      <td className="px-4 py-2.5">
+                        {o.salary_offered ? formatCurrency(o.salary_offered, true) : '—'}
+                        <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+                          Relocation: {o.relocation_support || (o.relocation_agreed === false ? 'No' : 'Yes')} · Bond: {o.bond_terms || (o.bond_agreed ? 'Bond Required' : 'No Bond')}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">{o.joining_date ? formatDate(o.joining_date) : '—'}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          {o.pdf_url ? (
+                            <a
+                              href={o.pdf_url}
+                              download={`Offer_Letter_${(o.candidate?.name || 'Candidate').replace(/\s+/g, '_')}.pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-sky-600 hover:text-sky-800 font-semibold hover:underline bg-sky-50 px-2.5 py-1 rounded border border-sky-200"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Download PDF
+                            </a>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                const printWindow = window.open('', '_blank')
+                                if (printWindow) {
+                                  printWindow.document.write(`
+                                    <!DOCTYPE html><html><head><title>Offer Letter - ${o.candidate?.name || 'Candidate'}</title>
+                                    <style>
+                                      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #1e293b; max-width: 800px; margin: 0 auto; line-height: 1.6; }
+                                      .header { border-bottom: 2px solid #0284c7; padding-bottom: 20px; margin-bottom: 24px; display: flex; justify-content: space-between; }
+                                      .company { font-size: 24px; font-weight: 800; color: #0f172a; }
+                                      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0; background: #f8fafc; padding: 16px; border-radius: 8px; }
+                                    </style></head>
+                                    <body>
+                                      <div class="header">
+                                        <div><div class="company">NYGENX INC.</div><div>Official Employment Offer</div></div>
+                                        <div>Date: ${new Date().toLocaleDateString('en-IN')}</div>
+                                      </div>
+                                      <p>Dear <strong>${o.candidate?.name || 'Candidate'}</strong>,</p>
+                                      <p>We are pleased to extend an offer for the position of <strong>${o.job_opening?.title || 'Associate'}</strong> at NYGENX INC.</p>
+                                      <div class="grid">
+                                        <div><strong>Annual CTC:</strong> ₹${o.salary_offered?.toLocaleString('en-IN') || 'As Discussed'}</div>
+                                        <div><strong>Joining Date:</strong> ${o.joining_date ? new Date(o.joining_date).toLocaleDateString('en-IN') : 'Immediate'}</div>
+                                      </div>
+                                      <script>window.onload = () => { window.print(); }</script>
+                                    </body></html>
+                                  `)
+                                  printWindow.document.close()
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 font-medium"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Download Offer
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {isAccepted ? (
+                          <Badge variant="success" className="bg-emerald-100 text-emerald-800 border-emerald-300 gap-1 font-semibold">
+                            <CheckCircle2 className="h-3 w-3" /> Offer Accepted
+                          </Badge>
+                        ) : isDeclined ? (
+                          <Badge variant="destructive" className="gap-1 font-semibold">
+                            <XCircle className="h-3 w-3" /> Offer Declined
+                          </Badge>
+                        ) : isDiscuss ? (
+                          <Badge variant="warning" className="gap-1 font-semibold bg-amber-100 text-amber-900 border-amber-300">
+                            <MessageSquare className="h-3 w-3" /> Discussion Requested
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            Waiting for Candidate
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <Select value={o.status ?? 'issued'} onValueChange={(v) => updateStatus.mutate({ id: o.id, status: v })}>
+                            <SelectTrigger className="h-8 w-28"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="issued">Issued</SelectItem>
+                              <SelectItem value="accepted">Accepted</SelectItem>
+                              <SelectItem value="declined">Declined</SelectItem>
+                              <SelectItem value="withdrawn">Withdrawn</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {isAccepted && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="h-8 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm gap-1"
+                              onClick={() => {
+                                const params = new URLSearchParams({
+                                  action: 'add',
+                                  name: o.candidate?.name || '',
+                                  email: o.candidate?.email || '',
+                                  phone: (o.candidate as any)?.phone || '',
+                                  role: o.job_opening?.title || '',
+                                  salary: String(o.salary_offered || ''),
+                                  joiningDate: o.joining_date || '',
+                                })
+                                navigate(`/employees?${params.toString()}`)
+                              }}
+                            >
+                              <UserCheck className="h-3.5 w-3.5" /> Convert to Employee
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Issue Offer Dialog */}
+      <Dialog open={dialog} onOpenChange={setDialog}>
+        <DialogContent className="max-w-md sm:max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Issue Offer</DialogTitle>
+            <DialogDescription>Extend an official offer letter, upload offer letter PDF, and customize terms.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Candidate *</Label>
+              <Select value={candidateId || undefined} onValueChange={setCandidateId}>
+                <SelectTrigger><SelectValue placeholder="Select candidate" /></SelectTrigger>
+                <SelectContent>
+                  {candidates.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name} ({c.email})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Position</Label>
+              <Select value={jobId || undefined} onValueChange={setJobId}>
+                <SelectTrigger><SelectValue placeholder="Select position" /></SelectTrigger>
+                <SelectContent>
+                  {jobs.map((j) => (
+                    <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>CTC / Annual Salary Offered (₹)</Label>
+                <Input type="number" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="e.g. 600000" />
+              </div>
+              <div className="space-y-2">
+                <Label>Expected Joining Date</Label>
+                <Input type="date" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Relocation Support</Label>
+                <Select value={relocation} onValueChange={setRelocation}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Yes">Yes (Relocation Provided)</SelectItem>
+                    <SelectItem value="No">No (Not Required)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Employment Bond Duration</Label>
+                <Select value={bond} onValueChange={setBond}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="No Bond">No Bond</SelectItem>
+                    <SelectItem value="1 Year">1 Year Bond</SelectItem>
+                    <SelectItem value="2 Year">2 Year Bond</SelectItem>
+                    <SelectItem value="3 Year">3 Year Bond</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Upload PDF */}
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+              <Label className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                <Upload className="h-4 w-4 text-sky-600" />
+                Upload Official Offer Letter PDF (Optional)
+              </Label>
+              <Input
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handlePdfChange}
+                className="text-xs file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-sky-50 file:text-sky-700 hover:file:bg-sky-100"
+              />
+              {pdfFile && (
+                <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> Selected: {pdfFile.name} ({(pdfFile.size / 1024).toFixed(1)} KB)
+                </p>
+              )}
+            </div>
+
+            {/* Terms & Conditions Editable Template */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-slate-800">Customizable Terms &amp; Conditions Template</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setTermsConditions(DEFAULT_TERMS_TEMPLATE)}
+                  className="h-6 text-[11px] text-sky-600 hover:text-sky-800"
+                >
+                  Reset to Default
+                </Button>
+              </div>
+              <Textarea
+                rows={5}
+                value={termsConditions}
+                onChange={(e) => setTermsConditions(e.target.value)}
+                className="font-sans text-xs leading-relaxed"
+                placeholder="Enter customized employment terms and conditions..."
+              />
+              <p className="text-[11px] text-muted-foreground">
+                These terms will be rendered for the candidate to review and accept in their portal prior to confirming the offer.
+              </p>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
+              <Button type="submit" disabled={create.isPending}>
+                {create.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Issue Official Offer
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Candidate Verification Documents Modal */}
+      <Dialog open={!!docsCandidate} onOpenChange={(open) => !open && setDocsCandidate(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pre-Offer Verification Documents</DialogTitle>
+            <DialogDescription>
+              Review softcopies submitted by {docsCandidate?.name} prior to offer acceptance.
+            </DialogDescription>
+          </DialogHeader>
+          {docsCandidate && (
+            <CandidateDocumentsAdminViewer
+              candidate={docsCandidate}
+              isExperienced={(docsCandidate.category || '').toLowerCase() === 'experienced'}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+
+
+
+export default function RecruitmentPage() {
+  const { isManager } = useAuth()
+  const { data: interviews = [] } = useInterviews()
+  const pendingRescheduleCount = interviews.filter(
+    (i) => i.reschedule_requested === true && i.reschedule_status === 'pending'
+  ).length
+
+  if (!isManager) return <PageHeader title="Recruitment" description="Only managers can access recruitment." />
+  return (
+    <div>
+      <PageHeader title="Recruitment" description="Manage job openings, candidates, interviews and offers." />
+      <Tabs defaultValue="jobs">
+        <TabsList>
+          <TabsTrigger value="jobs">Jobs</TabsTrigger>
+          <TabsTrigger value="candidates">Candidates</TabsTrigger>
+          <TabsTrigger value="interviews" className="relative flex items-center gap-1.5">
+            Interviews
+            {pendingRescheduleCount > 0 && (
+              <Badge className="h-4.5 px-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] animate-pulse rounded-full">
+                {pendingRescheduleCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="offers">Offers</TabsTrigger>
+        </TabsList>
+        <TabsContent value="jobs" className="mt-4"><JobsTab /></TabsContent>
+        <TabsContent value="candidates" className="mt-4"><CandidatesTab /></TabsContent>
+        <TabsContent value="interviews" className="mt-4"><InterviewsTab /></TabsContent>
+        <TabsContent value="offers" className="mt-4"><OffersTab /></TabsContent>
+      </Tabs>
+    </div>
+  )
+}
