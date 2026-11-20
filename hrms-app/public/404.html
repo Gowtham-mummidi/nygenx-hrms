@@ -6,8 +6,8 @@
     <script>
       // Single Page Apps for GitHub Pages
       // MIT License https://github.com/rafgraph/spa-github-pages
-      // Set to 0 because hrm.oklut.com is a custom domain at the root path
-      var pathSegmentsToKeep = 0;
+      // For GitHub Project Pages (https://<user>.github.io/<repo>/), keep 1 segment; for root custom domains keep 0.
+      var pathSegmentsToKeep = window.location.pathname.startsWith('/nygenx-hrms') ? 1 : 0;
       var l = window.location;
       l.replace(
         l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
