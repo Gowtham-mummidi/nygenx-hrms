@@ -179,22 +179,11 @@ export default function CareersPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-white pt-24 pb-32">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
-        <div className="absolute left-0 right-0 top-0 -z-10 m-auto h-[310px] w-[310px] rounded-full bg-sky-600 opacity-20 blur-[100px]"></div>
-        <div className="max-w-5xl mx-auto px-6 relative z-10 text-center flex flex-col items-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium mb-8 border border-primary/20">
-            <Zap className="h-4 w-4" /> We're hiring across all departments!
-          </div>
-          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-slate-950 mb-6 leading-tight">
-            Build the future <br/>
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00A3FF] via-[#0284C7] to-[#0369A1]">
-              with NYGENX.
-            </span>
-          </h1>
-          <p className="text-xl text-slate-600 max-w-2xl mb-10 leading-relaxed">
-            Join the unified intelligence layer and operating system for next-generation businesses. Help us engineer custom AI, cloud architecture, and high-performance software platforms.
-          </p>
+      <section className="relative overflow-hidden pt-16 pb-0">
+        <div className="w-full flex justify-center">
+          <img src="career-hero.jpg" alt="Build the future with NYGENX - Collaboration, Trust, Workflow, Growth" className="w-full max-w-6xl object-contain" />
+        </div>
+        <div className="flex justify-center pb-12 -mt-4">
           <a href="#jobs">
             <Button size="lg" className="rounded-full px-8 bg-sky-600 hover:bg-sky-700 shadow-lg shadow-sky-200 h-14 text-lg">
               Explore Open Roles <ArrowRight className="ml-2 h-5 w-5" />
