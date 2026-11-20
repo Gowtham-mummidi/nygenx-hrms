@@ -190,7 +190,7 @@ function smtpDevPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), smtpDevPlugin()],
-  base: '/',
+  base: '/nygenx-hrms/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

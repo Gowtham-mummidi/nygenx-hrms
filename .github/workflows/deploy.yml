@@ -43,7 +43,7 @@ jobs:
           if [ -z "$KEY" ]; then KEY="sb_publishable_gAOufq0KVS9ugonSUIC8cA_i5DAtaII"; fi
           echo "VITE_SUPABASE_URL=$URL" > .env
           echo "VITE_SUPABASE_ANON_KEY=$KEY" >> .env
-          echo "VITE_APP_URL=https://suryani-76.github.io/HRMS_app" >> .env
+          echo "VITE_APP_URL=https://Gowtham-mummidi.github.io/nygenx-hrms" >> .env
         working-directory: hrms-app
 
       - name: Build React app
